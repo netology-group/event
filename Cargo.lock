@@ -505,7 +505,7 @@ dependencies = [
  "svc-agent 0.11.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "svc-authn 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "svc-authz 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "svc-error 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "svc-error 0.1.8 (git+https://github.com/netology-group/svc-error-rs?branch=sentry_with_payload)",
  "url 2.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "uuid 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -2047,7 +2047,7 @@ dependencies = [
 [[package]]
 name = "svc-error"
 version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+https://github.com/netology-group/svc-error-rs?branch=sentry_with_payload#ce7f40df8eb58bbbb484bdf490f819b964377ec9"
 dependencies = [
  "atom 0.3.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "diesel 1.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2887,7 +2887,7 @@ dependencies = [
 "checksum svc-agent 0.11.2 (registry+https://github.com/rust-lang/crates.io-index)" = "24f80dd9292e8558069bb5c7daafacbe264bb06374b16b1c8de83c922d5d9e50"
 "checksum svc-authn 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "196a09f812b12fe8a57e457d6998ee66baeffa1d8f4c0611d006c335714f31aa"
 "checksum svc-authz 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)" = "65402b589acf2ffc7547f8e5e411704fd1411f1ec7b931971e2ad4f10afae4f5"
-"checksum svc-error 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)" = "b9841fba75aaebf5ac0e2e82610d757e62ea7e094e0ab1130494f7be921acd0d"
+"checksum svc-error 0.1.8 (git+https://github.com/netology-group/svc-error-rs?branch=sentry_with_payload)" = "<none>"
 "checksum syn 0.11.11 (registry+https://github.com/rust-lang/crates.io-index)" = "d3b891b9015c88c576343b9b3e41c2c11a51c219ef067b264bd9c8aa9b441dad"
 "checksum syn 0.15.44 (registry+https://github.com/rust-lang/crates.io-index)" = "9ca4b3b69a77cbe1ffc9e198781b7acb0c7365a883670e8f1c1bc66fba79a5c5"
 "checksum syn 1.0.14 (registry+https://github.com/rust-lang/crates.io-index)" = "af6f3550d8dff9ef7dc34d384ac6f107e5d31c8f57d9f28e0081503f547ac8f5"

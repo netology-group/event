@@ -25,6 +25,6 @@ serde_json = "1.0"
 svc-agent = { version = "0.11", features = ["diesel"] }
 svc-authn = { version = "0.5", features = ["jose", "diesel"] }
 svc-authz = "0.10"
-svc-error = { version = "0.1", features = ["diesel", "r2d2", "svc-agent", "svc-authn", "svc-authz", "sentry-extension"] }
+svc-error = { git = "https://github.com/netology-group/svc-error-rs", branch = "sentry_with_payload", features = ["diesel", "r2d2", "svc-agent", "svc-authn", "svc-authz", "sentry-extension"] }
 url = "2.1"
 uuid = { version = "0.6", features = ["v4", "serde"] }
