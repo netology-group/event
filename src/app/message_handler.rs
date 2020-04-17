@@ -34,17 +34,16 @@ impl<C: Context + Sync> MessageHandler<C> {
         );
 
         if let Err(err) = self.handle_message(message_bytes).await {
-            error!(
-                "Error processing a message = '{}': {}",
-                String::from_utf8_lossy(message_bytes),
-                err,
-            );
+            let message_lossy = String::from_utf8_lossy(message_bytes);
+            error!("Error processing a message = '{}': {}", message_lossy, err,);
 
-            let svc_error = SvcError::builder()
+            let mut svc_error = SvcError::builder()
                 .status(ResponseStatus::UNPROCESSABLE_ENTITY)
                 .kind("message_handler", "Message handling error")
                 .detail(&err.to_string())
                 .build();
+
+            svc_error.set_payload(&message_lossy);
 
             sentry::send(svc_error)
                 .unwrap_or_else(|err| warn!("Error sending error to Sentry: {}", err));
@@ -83,7 +82,7 @@ impl<C: Context + Sync> MessageHandler<C> {
         start_timestamp: DateTime<Utc>,
     ) -> Result<(), SvcError> {
         let outgoing_message_stream =
-            endpoint::route_request(&self.context, envelope, &reqp, start_timestamp)
+            endpoint::route_request(&self.context, &envelope, &reqp, start_timestamp)
                 .await
                 .unwrap_or_else(|| {
                     error_response(
@@ -194,7 +193,7 @@ pub(crate) fn publish_message(
 pub(crate) trait RequestEnvelopeHandler<'async_trait> {
     fn handle_envelope<C: Context>(
         context: &'async_trait C,
-        envelope: compat::IncomingEnvelope,
+        envelope: &'async_trait compat::IncomingEnvelope,
         reqp: &'async_trait IncomingRequestProperties,
         start_timestamp: DateTime<Utc>,
     ) -> Pin<Box<dyn Future<Output = MessageStream> + Send + 'async_trait>>;
@@ -208,7 +207,7 @@ impl<'async_trait, H: 'async_trait + Sync + endpoint::RequestHandler>
 {
     fn handle_envelope<C: Context>(
         context: &'async_trait C,
-        envelope: compat::IncomingEnvelope,
+        envelope: &'async_trait compat::IncomingEnvelope,
         reqp: &'async_trait IncomingRequestProperties,
         start_timestamp: DateTime<Utc>,
     ) -> Pin<Box<dyn Future<Output = MessageStream> + Send + 'async_trait>>
@@ -218,7 +217,7 @@ impl<'async_trait, H: 'async_trait + Sync + endpoint::RequestHandler>
         // The actual implementation.
         async fn handle_envelope<H: endpoint::RequestHandler, C: Context>(
             context: &C,
-            envelope: compat::IncomingEnvelope,
+            envelope: &compat::IncomingEnvelope,
             reqp: &IncomingRequestProperties,
             start_timestamp: DateTime<Utc>,
         ) -> MessageStream {
@@ -229,6 +228,7 @@ impl<'async_trait, H: 'async_trait + Sync + endpoint::RequestHandler>
                     .await
                     .unwrap_or_else(|mut svc_error| {
                         svc_error.set_kind(reqp.method(), H::ERROR_TITLE);
+                        svc_error.set_payload(&format!("{:?}", envelope));
 
                         sentry::send(svc_error.clone())
                             .unwrap_or_else(|err| warn!("Error sending error to Sentry: {}", err));
@@ -306,6 +306,7 @@ impl<'async_trait, H: 'async_trait + endpoint::EventHandler> EventEnvelopeHandle
                                 label, svc_error
                             );
 
+                            svc_error.set_payload(&format!("{:?}", envelope));
                             sentry::send(svc_error).unwrap_or_else(|err| {
                                 warn!("Error sending error to Sentry: {}", err)
                             });

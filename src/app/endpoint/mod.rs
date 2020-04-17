@@ -33,7 +33,7 @@ macro_rules! request_routes {
     ($($m: pat => $h: ty),*) => {
         pub(crate) async fn route_request<C: Context>(
             context: &C,
-            envelope: IncomingEnvelope,
+            envelope: &IncomingEnvelope,
             reqp: &IncomingRequestProperties,
             start_timestamp: DateTime<Utc>,
         ) -> Option<MessageStream> {
