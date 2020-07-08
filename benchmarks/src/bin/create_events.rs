@@ -6,7 +6,6 @@ use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use clap::{value_t, App, Arg};
-use futures::executor::ThreadPool;
 use log::info;
 use quantiles::ckms::CKMS;
 use serde_json::json;
@@ -30,6 +29,7 @@ struct StatsAgent {
     is_running: AtomicBool,
     processing_times: Mutex<CKMS<u32>>,
     processing_times_proc: Mutex<CKMS<u32>>,
+    processing_times_send: Mutex<CKMS<u32>>,
 }
 
 impl StatsAgent {
@@ -38,6 +38,7 @@ impl StatsAgent {
             is_running: AtomicBool::new(false),
             processing_times: Mutex::new(CKMS::<u32>::new(CKMS_ERROR)),
             processing_times_proc: Mutex::new(CKMS::<u32>::new(CKMS_ERROR)),
+            processing_times_send: Mutex::new(CKMS::<u32>::new(CKMS_ERROR)),
         }
     }
 
@@ -64,6 +65,11 @@ impl StatsAgent {
             .lock()
             .expect("Failed to obtain lock");
 
+        let mut processing_times_send = self
+            .processing_times_send
+            .lock()
+            .expect("Failed to obtain lock");
+
         while self.is_running.load(Ordering::SeqCst) {
             if let Ok(AgentNotification::Message(Ok(IncomingMessage::Event(ev)), _)) = rx.try_recv()
             {
@@ -75,29 +81,45 @@ impl StatsAgent {
                 let evp_value =
                     serde_json::to_value(ev.properties()).expect("Failed to dump event properties");
 
+                let broker_processing_timestamp = evp_value
+                    .get("broker_processing_timestamp")
+                    .expect("Missing broker_processing_timestamp in event properties")
+                    .as_str()
+                    .expect("Failed to cast broker_processing_timestamp as string")
+                    .parse::<u64>()
+                    .expect("Failed to parse broker_processing_timestamp");
+
                 let broker_timestamp = evp_value
                     .get("broker_timestamp")
-                    .expect("Missing broker timestamp in event properties")
+                    .expect("Missing broker_timestamp in event properties")
                     .as_str()
-                    .expect("Failed to cast broker timestamp as string")
+                    .expect("Failed to cast broker_timestamp as string")
                     .parse::<u64>()
-                    .expect("Failed to parse broker timestamp");
+                    .expect("Failed to parse broker_timestamp");
 
                 let initial_timestamp = evp_value
                     .get("initial_timestamp")
-                    .expect("Missing initial timestamp in event properties")
+                    .expect("Missing initial_timestamp in event properties")
                     .as_str()
-                    .expect("Failed to cast initial timestamp as string")
+                    .expect("Failed to cast initial_timestamp as string")
                     .parse::<u64>()
-                    .expect("Failed to parse initial timestamp");
+                    .expect("Failed to parse initial_timestamp");
+
+                let timestamp = evp_value
+                    .get("timestamp")
+                    .expect("Missing timestamp in event properties")
+                    .as_str()
+                    .expect("Failed to cast timestamp as string")
+                    .parse::<u64>()
+                    .expect("Failed to parse timestamp");
 
                 let processing_time = evp_value
                     .get("processing_time")
-                    .expect("Missing initial timestamp in event properties")
+                    .expect("Missing processing_time in event properties")
                     .as_str()
-                    .expect("Failed to cast initial timestamp as string")
+                    .expect("Failed to cast processing_time as string")
                     .parse::<u64>()
-                    .expect("Failed to parse initial timestamp");
+                    .expect("Failed to parse processing_time");
 
                 if initial_timestamp > broker_timestamp {
                     println!("{} {}", broker_timestamp, initial_timestamp);
@@ -105,6 +127,7 @@ impl StatsAgent {
 
                 (*processing_times).insert((broker_timestamp - initial_timestamp) as u32);
                 (*processing_times_proc).insert(processing_time as u32);
+                (*processing_times_send).insert((broker_processing_timestamp - timestamp) as u32);
             }
         }
     }
@@ -136,11 +159,23 @@ impl StatsAgent {
 
         fun(&*processing_times)
     }
+
+    fn with_processing_times_send<F, R>(&self, fun: F) -> R
+    where
+        F: FnOnce(&CKMS<u32>) -> R,
+    {
+        let processing_times = self
+            .processing_times_send
+            .lock()
+            .expect("Failed to obtain lock because stats agent failed during data collection");
+
+        fun(&*processing_times)
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-
-fn main() {
+#[async_std::main]
+async fn main() {
     env_logger::init();
 
     let matches = App::new("event.create benchmark")
@@ -252,7 +287,6 @@ fn main() {
 
     ///////////////////////////////////////////////////////////////////////////
 
-    let pool = Arc::new(ThreadPool::new().expect("Failed to build thread pool"));
 
     let agent_config_json = json!({
         "uri": format!("{}:{}", mqtt_host, mqtt_port),
@@ -274,7 +308,7 @@ fn main() {
     let agent_config_clone = agent_config.clone();
     let service_account_id_clone = service_account_id.clone();
 
-    pool.spawn_ok(async move {
+    async_std::task::spawn(async move {
         stats_agent_clone
             .start(
                 &agent_config_clone,
@@ -295,7 +329,7 @@ fn main() {
                     // Start agent with service subscription.
                     let agent_label = format!("bench-{}-{}", room_idx, agent_idx);
                     let agent_id = AgentId::new(&agent_label, account_id.clone());
-                    TestAgent::start(&agent_config, agent_id, pool.clone(), &service_account_id)
+                    TestAgent::start(&agent_config, agent_id, &service_account_id)
                 })
                 .collect::<Vec<TestAgent>>()
         })
@@ -307,7 +341,7 @@ fn main() {
 
     let registry = rooms_agents
         .into_iter()
-        .map(|room_agents| {
+        .map(|room_agents| async {
             // Create room as the first agent.
             let now = Utc::now().timestamp();
 
@@ -318,7 +352,7 @@ fn main() {
                     time: (now, now + ROOM_DURATION),
                     tags: json!({ "benchmark": tag }),
                 },
-            );
+            ).await;
 
             if response.properties().status() != ResponseStatus::CREATED {
                 panic!("Failed to create room");
@@ -331,7 +365,7 @@ fn main() {
                 let response = agent.request::<RoomEnterRequest, RoomEnterResponse>(
                     "room.enter",
                     RoomEnterRequest { id: room_id },
-                );
+                ).await;
 
                 if response.properties().status() != ResponseStatus::ACCEPTED {
                     panic!("Failed to enter room");
@@ -344,8 +378,9 @@ fn main() {
             }
 
             (room_id, room_agents)
-        })
-        .collect::<Vec<(Uuid, Vec<TestAgent>)>>();
+        });
+
+    let registry: Vec<(Uuid, Vec<TestAgent>)> = futures::future::join_all(registry).await;
 
     ///////////////////////////////////////////////////////////////////////////
 
@@ -353,6 +388,8 @@ fn main() {
         "Creating {} events per second for each agent. Stop with Ctrl+C.",
         rate
     );
+
+    println!("Starting bench");
 
     let mut intervals = Vec::with_capacity(rooms_count * agents_per_room);
 
@@ -362,7 +399,7 @@ fn main() {
             let interval = Arc::new(Interval::new(rate));
             let interval_clone = interval.clone();
 
-            pool.spawn_ok(async move {
+            async_std::task::spawn(async move {
                 interval_clone
                     .run(|| {
                         info!("Create event");
@@ -397,11 +434,14 @@ fn main() {
             interval.stop();
         }
 
-        is_running_clone.store(false, Ordering::SeqCst);
+        let old_running = is_running_clone.swap(false, Ordering::SeqCst);
+        if old_running {
+            println!("Stopping, please wait a bit");
+        }
     })
     .expect("Failed to set Ctrl+C handler");
 
-    while is_running.load(Ordering::SeqCst) {}
+    async_std::task::sleep(std::time::Duration::from_secs(30)).await;
 
     ///////////////////////////////////////////////////////////////////////////
 
@@ -421,13 +461,28 @@ fn main() {
         }
     });
 
-    println!("\n\nprocessing time:\n");
+    println!("\n\n processing time:\n");
 
     stats_agent.with_processing_times_proc(|times| {
         if times.count() > 0 {
             for q in vec![0.5, 0.75, 0.9, 0.95, 0.99, 1.0] {
                 if let Some((a, b)) = times.query(q) {
-                    println!("PROC{}: {}, {}", q, a, b);
+                    println!("Q{}: {}, {}", q, a, b);
+                }
+            }
+        } else {
+            println!("No events captured");
+        }
+    });
+
+
+    println!("\n\n time between app and broker:\n");
+
+    stats_agent.with_processing_times_send(|times| {
+        if times.count() > 0 {
+            for q in vec![0.5, 0.75, 0.9, 0.95, 0.99, 1.0] {
+                if let Some((a, b)) = times.query(q) {
+                    println!("Q{}: {}, {}", q, a, b);
                 }
             }
         } else {

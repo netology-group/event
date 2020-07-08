@@ -1,11 +1,9 @@
 extern crate event_benchmark;
 
 use std::str::FromStr;
-use std::sync::Arc;
 
 use chrono::Utc;
 use clap::{value_t, App, Arg};
-use futures::executor::ThreadPool;
 use log::info;
 use serde_json::json;
 use svc_agent::{
@@ -16,8 +14,8 @@ use svc_agent::{
 use event_benchmark::{types::*, TestAgent};
 
 ///////////////////////////////////////////////////////////////////////////////
-
-fn main() {
+#[async_std::main]
+async fn main() {
     env_logger::init();
 
     let matches = App::new("state.read benchmark")
@@ -112,8 +110,6 @@ fn main() {
 
     ///////////////////////////////////////////////////////////////////////////
 
-    let pool = Arc::new(ThreadPool::new().expect("Failed to build thread pool"));
-
     let agent_config_json = json!({
         "uri": format!("{}:{}", mqtt_host, mqtt_port),
     });
@@ -131,7 +127,6 @@ fn main() {
     let agent = TestAgent::start(
         &agent_config,
         agent_id.clone(),
-        pool.clone(),
         &service_account_id,
     );
 
@@ -147,7 +142,7 @@ fn main() {
             time: (now, now + ROOM_DURATION),
             tags: json!({ "benchmark": tag }),
         },
-    );
+    ).await;
 
     if response.properties().status() != ResponseStatus::CREATED {
         panic!("Failed to create room");
@@ -162,7 +157,7 @@ fn main() {
     let response = agent.request::<RoomEnterRequest, RoomEnterResponse>(
         "room.enter",
         RoomEnterRequest { id: room_id },
-    );
+    ).await;
 
     if response.properties().status() != ResponseStatus::ACCEPTED {
         panic!("Failed to enter room");
@@ -195,7 +190,7 @@ fn main() {
                         }),
                         is_persistent: true,
                     },
-                );
+                ).await;
 
                 if response.properties().status() != ResponseStatus::CREATED {
                     panic!("Failed to create event");
@@ -221,7 +216,7 @@ fn main() {
     };
 
     let start = Utc::now();
-    let response = agent.request::<StateReadRequest, StateReadResponse>("state.read", payload);
+    let response = agent.request::<StateReadRequest, StateReadResponse>("state.read", payload).await;
     let request_duration = Utc::now() - start;
 
     if response.properties().status() != ResponseStatus::OK {

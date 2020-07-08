@@ -66,10 +66,18 @@ async fn main() -> Result<()> {
         Cache::new(create_pool(&url, size, timeout), expiration_time)
     });
 
-    app::run(&db, authz_cache).await
+    let app_cache = var("APP_CACHE_EXPIRATION_TIME").ok().map(|exp_time| {
+        let exp_time = exp_time
+            .parse::<u64>()
+            .expect("Error converting APP_CACHE_EXPIRATION_TIME variable into u64");
+        crate::cache::AppCache::new(exp_time)
+    });
+
+    app::run(&db, authz_cache, app_cache).await
 }
 
 mod app;
+mod cache;
 mod config;
 mod db;
 #[allow(unused_imports)]

@@ -1,9 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
 
 use chrono::Utc;
-use futures::executor::ThreadPool;
+use futures::StreamExt;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use serde::{de::DeserializeOwned, ser::Serialize};
 use serde_derive::Deserialize;
@@ -31,7 +30,6 @@ pub struct TestAgent {
     agent: Agent,
     request_dispatcher: Arc<RequestDispatcher>,
     event_dispatcher: Arc<EventDispatcher>,
-    pool: Arc<ThreadPool>,
     service_account_id: AccountId,
     inbox_topic: String,
 }
@@ -40,7 +38,6 @@ impl TestAgent {
     pub fn start(
         config: &AgentConfig,
         id: AgentId,
-        pool: Arc<ThreadPool>,
         service_account_id: &AccountId,
     ) -> Self {
         // Start agent.
@@ -67,22 +64,40 @@ impl TestAgent {
         let event_dispatcher = Arc::new(EventDispatcher::new());
         let event_dispatcher_clone = event_dispatcher.clone();
 
-        pool.spawn_ok(async move {
+        let (mq_tx, mut mq_rx) = futures_channel::mpsc::unbounded::<AgentNotification>();
+
+        std::thread::Builder::new()
+            .name("test-agent-notifications-loop".to_owned())
+            .spawn(move || {
+                for message in rx {
+                    if mq_tx.unbounded_send(message).is_err() {
+                        eprintln!("Error sending message to the internal channel");
+                    }
+                }
+            })
+        .expect("Failed to start event notifications loop");
+
+        async_std::task::spawn(async move {
             loop {
-                if let Ok(AgentNotification::Message(Ok(message), _)) = rx.recv() {
+                let q = mq_rx.next().await;
+                if let Some(AgentNotification::Message(Ok(message), _)) = q {
                     match message {
                         IncomingMessage::Request(_) => (),
                         IncomingMessage::Response(resp) => {
                             if resp.properties().correlation_data() != IGNORE {
-                                let json = serde_json::from_str(resp.payload())
-                                    .expect("Failed to parse response");
+                                let request_dispatcher_clone_ = request_dispatcher_clone.clone();
 
-                                let respp = resp.properties().to_owned();
+                                async_std::task::spawn(async move {
+                                    let json = serde_json::from_str(resp.payload())
+                                        .expect("Failed to parse response");
 
-                                request_dispatcher_clone
-                                    .response(IncomingResponse::new(json, respp))
-                                    .await
-                                    .expect("Failed to dispatch response");
+                                    let respp = resp.properties().to_owned();
+
+                                    request_dispatcher_clone_
+                                        .response(IncomingResponse::new(json, respp))
+                                        .await
+                                        .expect("Failed to dispatch response");
+                                });
                             }
                         }
                         ev @ IncomingMessage::Event(_) => event_dispatcher_clone.dispatch(ev),
@@ -96,7 +111,6 @@ impl TestAgent {
             agent,
             request_dispatcher,
             event_dispatcher,
-            pool,
             service_account_id: service_account_id.to_owned(),
             inbox_topic,
         }
@@ -107,7 +121,7 @@ impl TestAgent {
     }
 
     /// Publish a request and wait for the response.
-    pub fn request<Req, Resp>(&self, method: &str, payload: Req) -> IncomingResponse<Resp>
+    pub async fn request<Req, Resp>(&self, method: &str, payload: Req) -> IncomingResponse<Resp>
     where
         Req: 'static + Send + Serialize,
         Resp: 'static + Send + DeserializeOwned,
@@ -122,10 +136,10 @@ impl TestAgent {
             _ => panic!("Expected outgoing request"),
         };
 
-        let (resp_tx, resp_rx) = mpsc::channel::<IncomingResponse<Resp>>();
+        let (resp_tx, resp_rx) = futures::channel::oneshot::channel::<IncomingResponse<Resp>>();
         let dispatcher = self.request_dispatcher.clone();
 
-        self.pool.spawn_ok(async move {
+        async_std::task::spawn(async move {
             let response = dispatcher
                 .request::<Req, Resp>(request)
                 .await
@@ -133,11 +147,12 @@ impl TestAgent {
 
             resp_tx
                 .send(response)
+                .map_err(|_e| "")
                 .expect("Failed to notify about received response");
         });
 
         resp_rx
-            .recv_timeout(Duration::from_secs(5))
+            .await
             .expect("Failed to await response")
     }
 

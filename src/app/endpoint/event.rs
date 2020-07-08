@@ -56,14 +56,40 @@ impl RequestHandler for CreateHandler {
         start_timestamp: DateTime<Utc>,
     ) -> Result {
         let (room, author) = {
-            let conn = context.db().get()?;
+            let mut conn = None;
 
             // Check whether the room exists and open.
-            let room = db::room::FindQuery::new(payload.room_id)
-                .time(db::room::now())
-                .execute(&conn)?
-                .ok_or_else(|| format!("the room = '{}' is not found or closed", payload.room_id))
-                .status(ResponseStatus::NOT_FOUND)?;
+            let room = {
+                let maybe_cache = context.app_cache();
+                let maybe_room = if let Some(cache) = maybe_cache {
+                    cache.room(payload.room_id).await
+                } else {
+                    None
+                };
+
+                match maybe_room {
+                    Some(room) => room,
+                    None => {
+                        let connection = context.db().get()?;
+                        let room = db::room::FindQuery::new(payload.room_id)
+                            .time(db::room::now())
+                            .execute(&connection)?
+                            .ok_or_else(|| {
+                                format!("the room = '{}' is not found or closed", payload.room_id)
+                            })
+                            .status(ResponseStatus::NOT_FOUND)?;
+                        let maybe_cache_ = maybe_cache.clone();
+                        let room_ = room.clone();
+                        conn = Some(connection);
+                        async_std::task::spawn(async move {
+                            if let Some(cache) = maybe_cache_ {
+                                cache.insert_room(room_).await;
+                            }
+                        });
+                        room
+                    }
+                }
+            };
 
             let author = match payload {
                 // Get author of the original event with the same label if applicable.
@@ -71,9 +97,37 @@ impl RequestHandler for CreateHandler {
                     set: Some(ref set),
                     label: Some(ref label),
                     ..
-                } => db::event::OriginalEventQuery::new(room.id(), set, label)
-                    .execute(&conn)?
-                    .map(|original_event| original_event.created_by().as_account_id().to_string()),
+                } => {
+                    let maybe_cache = context.app_cache();
+                    let maybe_author = if let Some(cache) = maybe_cache {
+                        cache.author(payload.room_id, set, label).await
+                    } else {
+                        None
+                    };
+
+                    match maybe_author {
+                        Some(author) => author,
+                        None => {
+                            let conn = conn.unwrap_or(context.db().get()?);
+                            let room_id = room.id();
+                            let author = db::event::OriginalEventQuery::new(room.id(), set, label)
+                                .execute(&conn)?
+                                .map(|original_event| {
+                                    original_event.created_by().as_account_id().to_string()
+                                });
+                            let maybe_cache_ = maybe_cache.clone();
+                            let author_ = author.clone();
+                            let set_ = set.to_owned();
+                            let label_ = label.to_owned();
+                            async_std::task::spawn(async move {
+                                if let Some(cache) = maybe_cache_ {
+                                    cache.insert_author(room_id, set_, label_, author_).await;
+                                }
+                            });
+                            author
+                        }
+                    }
+                }
                 _ => None,
             }
             .unwrap_or_else(|| {

@@ -3,6 +3,7 @@ use svc_agent::{queue_counter::QueueCounterHandle, AgentId};
 use svc_authz::ClientMap as Authz;
 
 use crate::app::context::Context;
+use crate::cache::AppCache;
 use crate::config::Config;
 use crate::db::ConnectionPool as Db;
 
@@ -76,6 +77,10 @@ impl Context for TestContext {
     }
 
     fn queue_counter(&self) -> &Option<QueueCounterHandle> {
+        &None
+    }
+
+    fn app_cache(&self) -> &Option<AppCache> {
         &None
     }
 }

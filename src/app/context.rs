@@ -3,6 +3,7 @@ use std::sync::Arc;
 use svc_agent::{queue_counter::QueueCounterHandle, AgentId};
 use svc_authz::ClientMap as Authz;
 
+use crate::cache::AppCache;
 use crate::config::Config;
 use crate::db::ConnectionPool as Db;
 
@@ -13,6 +14,7 @@ pub(crate) struct AppContext {
     db: Db,
     agent_id: AgentId,
     queue_counter: Option<QueueCounterHandle>,
+    cache: Option<AppCache>,
 }
 
 impl AppContext {
@@ -21,6 +23,7 @@ impl AppContext {
 
         Self {
             queue_counter: None,
+            cache: None,
             config: Arc::new(config),
             authz,
             db,
@@ -34,6 +37,13 @@ impl AppContext {
             ..self
         }
     }
+
+    pub(crate) fn add_app_cache(self, cache: AppCache) -> Self {
+        Self {
+            cache: Some(cache),
+            ..self
+        }
+    }
 }
 
 pub(crate) trait Context: Sync {
@@ -42,6 +52,7 @@ pub(crate) trait Context: Sync {
     fn db(&self) -> &Db;
     fn agent_id(&self) -> &AgentId;
     fn queue_counter(&self) -> &Option<QueueCounterHandle>;
+    fn app_cache(&self) -> &Option<AppCache>;
 }
 
 impl Context for AppContext {
@@ -63,5 +74,9 @@ impl Context for AppContext {
 
     fn queue_counter(&self) -> &Option<QueueCounterHandle> {
         &self.queue_counter
+    }
+
+    fn app_cache(&self) -> &Option<AppCache> {
+        &self.cache
     }
 }

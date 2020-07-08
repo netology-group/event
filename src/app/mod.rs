@@ -17,6 +17,7 @@ use svc_authz::cache::Cache as AuthzCache;
 use svc_error::{extension::sentry, Error as SvcError};
 
 use crate::app::context::Context;
+use crate::cache::AppCache;
 use crate::config::{self, Config, KruonisConfig};
 use crate::db::ConnectionPool;
 use context::AppContext;
@@ -26,7 +27,11 @@ pub(crate) const API_VERSION: &str = "v1";
 
 ////////////////////////////////////////////////////////////////////////////////
 
-pub(crate) async fn run(db: &ConnectionPool, authz_cache: Option<AuthzCache>) -> Result<()> {
+pub(crate) async fn run(
+    db: &ConnectionPool,
+    authz_cache: Option<AuthzCache>,
+    app_cache: Option<AppCache>,
+) -> Result<()> {
     // Config
     let config = config::load().context("Failed to load config")?;
     info!("App config: {:?}", config);
@@ -79,6 +84,12 @@ pub(crate) async fn run(db: &ConnectionPool, authz_cache: Option<AuthzCache>) ->
     // Context
     let context =
         AppContext::new(config, authz, db.clone()).add_queue_counter(agent.get_queue_counter());
+
+    let context = if let Some(cache) = app_cache {
+        context.add_app_cache(cache)
+    } else {
+        context
+    };
 
     // Message handler
     let message_handler = Arc::new(MessageHandler::new(agent, context));

@@ -5,11 +5,13 @@ authors = ["Timofey Martynov <t.martinov@netology-group.ru>"]
 edition = "2018"
 
 [dependencies]
+async-std = { version = "1.6", features = ["attributes", "unstable"] }
 chrono = "0.4"
 clap = "2.33"
 ctrlc = "3.1"
 env_logger = "0.7"
 futures = { version = "0.3", features = ["thread-pool"] }
+futures-channel = "0.3"
 futures-timer = "3.0"
 log = "0.4"
 rand = "0.7"
