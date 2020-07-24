@@ -14,6 +14,7 @@ use svc_agent::{
     },
     Addressable, AgentId,
 };
+use svc_authn::Authenticable;
 use svc_error::{extension::sentry, Error as SvcError};
 use uuid::Uuid;
 
@@ -22,6 +23,7 @@ use crate::app::endpoint::prelude::*;
 use crate::app::operations::adjust_room;
 use crate::db::adjustment::Segment;
 use crate::db::agent;
+use crate::db::chat_notification;
 use crate::db::room::{now, since_now, FindQuery, InsertQuery, Time, UpdateQuery};
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -312,6 +314,8 @@ impl RequestHandler for EnterHandler {
         {
             let conn = context.db().get()?;
             agent::InsertQuery::new(reqp.as_agent_id(), room.id()).execute(&conn)?;
+            chat_notification::InsertQuery::new(reqp.as_agent_id().as_account_id(), room.id())
+                .execute(&conn)?;
         }
 
         // Send dynamic subscription creation request to the broker.
@@ -1130,6 +1134,7 @@ mod tests {
 
                 // Allow agent to subscribe to the rooms' events.
                 let agent = TestAgent::new("web", "user123", USR_AUDIENCE);
+                let account_id = agent.account_id().to_owned();
                 let mut authz = TestAuthz::new();
                 let room_id = room.id().to_string();
 
@@ -1157,6 +1162,12 @@ mod tests {
                     context.config().id,
                 );
 
+                let conn = context.db().get().expect("Failed to get connection");
+                let notifs = chat_notification::ListQuery::new(&account_id)
+                    .execute(&conn)
+                    .expect("Failed to get notifs");
+
+                assert_eq!(notifs.len(), 1);
                 assert_eq!(topic, expected_topic);
                 assert_eq!(reqp.method(), "subscription.create");
                 assert_eq!(payload.subject, agent.agent_id().to_owned());

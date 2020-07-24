@@ -13,6 +13,7 @@ pub(crate) struct Config {
     pub(crate) authz: Authz,
     pub(crate) mqtt: AgentConfig,
     pub(crate) sentry: Option<SentryConfig>,
+    pub(crate) notifications_event_type: Option<String>,
     #[serde(default)]
     pub(crate) telemetry: TelemetryConfig,
     #[serde(default)]

@@ -6,8 +6,10 @@ use serde_json::Value as JsonValue;
 use svc_agent::AgentId;
 use uuid::Uuid;
 
-use super::room::Object as Room;
 use crate::schema::event;
+
+use super::chat_notification::DEFAULT_PRIORITY;
+use super::room::Object as Room;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -37,6 +39,7 @@ pub(crate) struct Object {
     )]
     deleted_at: Option<DateTime<Utc>>,
     original_occurred_at: i64,
+    priority: Option<i32>,
 }
 
 impl Object {
@@ -44,7 +47,6 @@ impl Object {
         self.id
     }
 
-    #[cfg(test)]
     pub(crate) fn room_id(&self) -> Uuid {
         self.room_id
     }
@@ -92,6 +94,7 @@ pub(crate) struct Builder {
     data: Option<JsonValue>,
     occurred_at: Option<i64>,
     created_by: Option<AgentId>,
+    priority: Option<i32>,
 }
 
 impl Builder {
@@ -104,6 +107,7 @@ impl Builder {
             data: None,
             occurred_at: None,
             created_by: None,
+            priority: None,
         }
     }
 
@@ -156,6 +160,13 @@ impl Builder {
         }
     }
 
+    pub(crate) fn priority(self, priority: i32) -> Self {
+        Self {
+            priority: Some(priority),
+            ..self
+        }
+    }
+
     pub(crate) fn build(self) -> Result<Object, &'static str> {
         let room_id = self.room_id.ok_or("Missing `room_id`")?;
         let kind = self.kind.ok_or("Missing `kind`")?;
@@ -163,6 +174,7 @@ impl Builder {
         let data = self.data.ok_or("Missing `data`")?;
         let occurred_at = self.occurred_at.ok_or("Missing `occurred_at`")?;
         let created_by = self.created_by.ok_or("Missing `created_by`")?;
+        let priority = self.priority;
 
         Ok(Object {
             id: Uuid::new_v4(),
@@ -176,6 +188,7 @@ impl Builder {
             created_at: Utc::now(),
             deleted_at: None,
             original_occurred_at: occurred_at,
+            priority,
         })
     }
 }
@@ -327,6 +340,7 @@ pub(crate) struct InsertQuery<'a> {
     occurred_at: i64,
     created_by: &'a AgentId,
     created_at: Option<DateTime<Utc>>,
+    priority: i32,
 }
 
 impl<'a> InsertQuery<'a> {
@@ -346,6 +360,7 @@ impl<'a> InsertQuery<'a> {
             occurred_at,
             created_by,
             created_at: None,
+            priority: DEFAULT_PRIORITY,
         }
     }
 
@@ -356,6 +371,13 @@ impl<'a> InsertQuery<'a> {
     pub(crate) fn label(self, label: &'a str) -> Self {
         Self {
             label: Some(label),
+            ..self
+        }
+    }
+
+    pub(crate) fn priority(self, priority: i32) -> Self {
+        Self {
+            priority: priority,
             ..self
         }
     }

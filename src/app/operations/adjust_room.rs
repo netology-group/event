@@ -336,15 +336,12 @@ mod tests {
     use std::ops::Bound;
 
     use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-    use diesel::pg::PgConnection;
     use serde_json::{json, Value as JsonValue};
-    use svc_agent::{AccountId, AgentId};
 
-    use crate::db::event::{
-        InsertQuery as EventInsertQuery, ListQuery as EventListQuery, Object as Event,
-    };
-    use crate::db::room::{InsertQuery as RoomInsertQuery, Object as Room};
+    use crate::db::event::{ListQuery as EventListQuery, Object as Event};
+    use crate::db::room::InsertQuery as RoomInsertQuery;
     use crate::test_helpers::db::TestDb;
+    use crate::test_helpers::prelude::*;
 
     const AUDIENCE: &str = "dev.svc.example.org";
 
@@ -368,7 +365,7 @@ mod tests {
                 .expect("Failed to insert room");
 
             // Create events.
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 1_000_000_000,
@@ -376,7 +373,7 @@ mod tests {
                 json!({"message": "m1"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 12_000_000_000,
@@ -384,7 +381,7 @@ mod tests {
                 json!({"message": "m2"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 13_000_000_000,
@@ -392,7 +389,7 @@ mod tests {
                 json!({"cut": "start"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 14_000_000_000,
@@ -400,7 +397,7 @@ mod tests {
                 json!({"message": "m4"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 15_000_000_000,
@@ -408,7 +405,7 @@ mod tests {
                 json!({"cut": "stop"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 16_000_000_000,
@@ -416,7 +413,7 @@ mod tests {
                 json!({"message": "m6"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 17_000_000_000,
@@ -424,7 +421,7 @@ mod tests {
                 json!({"message": "m7"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 18_000_000_000,
@@ -432,7 +429,7 @@ mod tests {
                 json!({"cut": "start"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 19_000_000_000,
@@ -440,7 +437,7 @@ mod tests {
                 json!({"message": "m9"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 20_000_000_000,
@@ -448,7 +445,7 @@ mod tests {
                 json!({"cut": "stop"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 21_000_000_000,
@@ -456,7 +453,7 @@ mod tests {
                 json!({"message": "m11"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 22_000_000_000,
@@ -685,26 +682,6 @@ mod tests {
                 ]
             )
         });
-    }
-
-    fn create_event(
-        conn: &PgConnection,
-        room: &Room,
-        occurred_at: i64,
-        kind: &str,
-        data: JsonValue,
-    ) {
-        let created_by = AgentId::new("test", AccountId::new("test", AUDIENCE));
-
-        let opened_at = match room.time() {
-            (Bound::Included(opened_at), _) => *opened_at,
-            _ => panic!("Invalid room time"),
-        };
-
-        EventInsertQuery::new(room.id(), kind, &data, occurred_at, &created_by)
-            .created_at(opened_at + Duration::nanoseconds(occurred_at))
-            .execute(conn)
-            .expect("Failed to insert event");
     }
 
     fn assert_event(event: &Event, occurred_at: i64, kind: &str, data: &JsonValue) {

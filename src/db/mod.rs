@@ -32,6 +32,7 @@ pub(crate) mod sql {
 pub(crate) mod adjustment;
 pub(crate) mod agent;
 pub(crate) mod change;
+pub(crate) mod chat_notification;
 pub(crate) mod edition;
 pub(crate) mod event;
 pub(crate) mod room;

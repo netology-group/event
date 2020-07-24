@@ -1,21 +1,27 @@
 use std::ops::Bound;
 
 use async_std::stream;
+use async_std::stream::StreamExt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use log::{error, warn};
 use serde_derive::Deserialize;
 use serde_json::Value as JsonValue;
 use svc_agent::Authenticable;
 use svc_agent::{
-    mqtt::{IncomingRequestProperties, ResponseStatus},
+    mqtt::{
+        IncomingRequestProperties, IntoPublishableMessage, OutgoingEvent, OutgoingEventProperties,
+        ResponseStatus, ShortTermTimingProperties,
+    },
     Addressable,
 };
+use svc_error::{extension::sentry, Error as SvcError};
 use uuid::Uuid;
 
 use crate::app::context::Context;
 use crate::app::endpoint::prelude::*;
+use crate::app::operations::increment_chat_notifications;
 use crate::db;
-
 ///////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +36,8 @@ pub(crate) struct CreateRequest {
     is_claim: bool,
     #[serde(default = "CreateRequest::default_is_persistent")]
     is_persistent: bool,
+    #[serde(default = "CreateRequest::default_priority")]
+    priority: i32,
 }
 
 impl CreateRequest {
@@ -39,6 +47,10 @@ impl CreateRequest {
 
     fn default_is_persistent() -> bool {
         true
+    }
+
+    fn default_priority() -> i32 {
+        crate::db::chat_notification::DEFAULT_PRIORITY
     }
 }
 
@@ -113,7 +125,8 @@ impl RequestHandler for CreateHandler {
                 &payload.data,
                 occurred_at,
                 reqp.as_agent_id(),
-            );
+            )
+            .priority(payload.priority);
 
             if let Some(ref set) = payload.set {
                 query = query.set(set);
@@ -138,7 +151,8 @@ impl RequestHandler for CreateHandler {
                 .kind(&payload.kind)
                 .data(&payload.data)
                 .occurred_at(occurred_at)
-                .created_by(reqp.as_agent_id());
+                .created_by(reqp.as_agent_id())
+                .priority(payload.priority);
 
             if let Some(ref set) = payload.set {
                 builder = builder.set(set)
@@ -153,6 +167,72 @@ impl RequestHandler for CreateHandler {
                 .map_err(|err| format!("Error building transient event: {}", err,))
                 .status(ResponseStatus::UNPROCESSABLE_ENTITY)?
         };
+
+        let notification = {
+            let mut task_finished = false;
+            let event = event.clone();
+            let db = context.db().clone();
+            let is_tracked_message = if payload.set.is_some()
+                && Some(payload.kind) == context.config().notifications_event_type
+            {
+                true
+            } else {
+                false
+            };
+            let to = reqp.as_agent_id().as_account_id().to_owned();
+
+            stream::from_fn(move || {
+                if is_tracked_message {
+                    if task_finished {
+                        return None;
+                    }
+
+                    match increment_chat_notifications(&db, &event) {
+                        Ok(vec) => {
+                            let vec = vec
+                                .into_iter()
+                                .map(|notif| {
+                                    let timing = ShortTermTimingProperties::new(Utc::now());
+                                    let props = OutgoingEventProperties::new(
+                                        "chat_notifications.update",
+                                        timing,
+                                    );
+                                    let event = OutgoingEvent::multicast(notif, props, &to);
+
+                                    task_finished = true;
+                                    Box::new(event) as Box<dyn IntoPublishableMessage + Send>
+                                })
+                                .collect::<Vec<_>>();
+                            Some(stream::from_iter(vec))
+                        }
+                        Err(err) => {
+                            error!(
+                                "Increment chat notifications jobs failed for (room_id, event_id) = ('{}', '{}'): {}",
+                                event.room_id(),
+                                event.id(),
+                                err
+                            );
+
+                            let error = SvcError::builder()
+                                .status(ResponseStatus::UNPROCESSABLE_ENTITY)
+                                .kind("event.create", "Failed to update notification counters")
+                                .detail(&err.to_string())
+                                .build();
+
+                            sentry::send(error.clone()).unwrap_or_else(|err| {
+                                warn!("Error sending error to Sentry: {}", err)
+                            });
+
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            })
+        };
+
+        let notification = notification.flatten();
 
         let mut messages = Vec::with_capacity(3);
 
@@ -185,7 +265,7 @@ impl RequestHandler for CreateHandler {
             start_timestamp,
         ));
 
-        Ok(Box::new(stream::from_iter(messages)))
+        Ok(Box::new(stream::from_iter(messages).chain(notification)))
     }
 }
 
@@ -286,6 +366,7 @@ impl RequestHandler for ListHandler {
 mod tests {
     use serde_json::json;
 
+    use crate::db::chat_notification::DEFAULT_PRIORITY;
     use crate::db::event::{Direction, Object as Event};
     use crate::test_helpers::outgoing_envelope::OutgoingEnvelopeProperties;
     use crate::test_helpers::prelude::*;
@@ -339,6 +420,7 @@ mod tests {
                 data: json!({ "text": "hello" }),
                 is_claim: false,
                 is_persistent: true,
+                priority: DEFAULT_PRIORITY,
             };
 
             let messages = handle_request::<CreateHandler>(&context, &agent, payload)
@@ -429,6 +511,7 @@ mod tests {
                 data: json!({ "text": "modified text" }),
                 is_claim: false,
                 is_persistent: true,
+                priority: DEFAULT_PRIORITY,
             };
 
             let messages = handle_request::<CreateHandler>(&context, &agent, payload)
@@ -480,6 +563,7 @@ mod tests {
                 data: json!({ "blocked": true }),
                 is_claim: true,
                 is_persistent: true,
+                priority: DEFAULT_PRIORITY,
             };
 
             let messages = handle_request::<CreateHandler>(&context, &agent, payload)
@@ -580,6 +664,7 @@ mod tests {
                 data: data.clone(),
                 is_claim: false,
                 is_persistent: false,
+                priority: DEFAULT_PRIORITY,
             };
 
             let messages = handle_request::<CreateHandler>(&context, &agent, payload)
@@ -638,6 +723,7 @@ mod tests {
                 data: json!({ "text": "hello" }),
                 is_claim: false,
                 is_persistent: true,
+                priority: DEFAULT_PRIORITY,
             };
 
             let err = handle_request::<CreateHandler>(&context, &agent, payload)
@@ -691,6 +777,7 @@ mod tests {
                 data: json!({ "text": "hello" }),
                 is_claim: false,
                 is_persistent: true,
+                priority: DEFAULT_PRIORITY,
             };
 
             let messages = handle_request::<CreateHandler>(&context, &agent, payload)
@@ -746,6 +833,7 @@ mod tests {
                 data: json!({ "text": "hello" }),
                 is_claim: false,
                 is_persistent: true,
+                priority: DEFAULT_PRIORITY,
             };
 
             let err = handle_request::<CreateHandler>(&context, &agent, payload)
@@ -770,6 +858,7 @@ mod tests {
                 data: json!({ "text": "hello" }),
                 is_claim: false,
                 is_persistent: true,
+                priority: DEFAULT_PRIORITY,
             };
 
             let err = handle_request::<CreateHandler>(&context, &agent, payload)

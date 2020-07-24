@@ -47,6 +47,21 @@ table! {
     use diesel::sql_types::*;
     use crate::db::sql::*;
 
+    chat_notification (id) {
+        id -> Uuid,
+        account_id -> Account_id,
+        room_id -> Uuid,
+        created_at -> Timestamptz,
+        priority -> Int4,
+        value -> Int4,
+        last_seen_id -> Nullable<Uuid>,
+    }
+}
+
+table! {
+    use diesel::sql_types::*;
+    use crate::db::sql::*;
+
     edition (id) {
         id -> Uuid,
         source_room_id -> Uuid,
@@ -71,6 +86,7 @@ table! {
         created_at -> Timestamptz,
         deleted_at -> Nullable<Timestamptz>,
         original_occurred_at -> Int8,
+        priority -> Nullable<Int4>,
     }
 }
 
@@ -92,6 +108,7 @@ joinable!(adjustment -> room (room_id));
 joinable!(agent -> room (room_id));
 joinable!(change -> edition (edition_id));
 joinable!(change -> event (event_id));
+joinable!(chat_notification -> room (room_id));
 joinable!(edition -> room (source_room_id));
 joinable!(event -> room (room_id));
 
@@ -99,6 +116,7 @@ allow_tables_to_appear_in_same_query!(
     adjustment,
     agent,
     change,
+    chat_notification,
     edition,
     event,
     room,

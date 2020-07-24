@@ -1,6 +1,6 @@
 use diesel::pg::PgConnection;
 use serde_json::Value as JsonValue;
-use svc_agent::AgentId;
+use svc_agent::{AccountId, AgentId, Authenticable};
 use uuid::Uuid;
 
 use crate::db;
@@ -336,6 +336,44 @@ impl Change {
             query
         };
 
+        query.execute(conn).expect("Failed to insert edition")
+    }
+}
+
+pub(crate) struct ChatNotification {
+    account_id: AccountId,
+    room_id: Uuid,
+    priority: i32,
+    value: i32,
+    last_seen_id: Option<Uuid>,
+}
+
+impl ChatNotification {
+    pub(crate) fn new(
+        agent_id: &AgentId,
+        room_id: Uuid,
+        priority: i32,
+        value: i32,
+        last_seen_id: Option<Uuid>,
+    ) -> Self {
+        Self {
+            room_id,
+            priority,
+            value,
+            last_seen_id,
+            account_id: agent_id.as_account_id().to_owned(),
+        }
+    }
+
+    pub(crate) fn insert(self, conn: &PgConnection) -> db::chat_notification::Object {
+        let query = db::chat_notification::InsertQuery::new(&self.account_id, self.room_id)
+            .priority(self.priority)
+            .value(self.value);
+        let query = if let Some(last_seen_id) = self.last_seen_id {
+            query.last_seen_id(last_seen_id)
+        } else {
+            query
+        };
         query.execute(conn).expect("Failed to insert edition")
     }
 }

@@ -312,24 +312,15 @@ fn collect_gaps(cut_events: &[Event], cut_changes: &[Change]) -> Result<Vec<(i64
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Bound;
-
-    use chrono::Duration;
-    use diesel::pg::PgConnection;
-    use serde_json::{json, Value as JsonValue};
+    use serde_json::json;
     use svc_agent::{AccountId, AgentId};
     use svc_authn::Authenticable;
 
-    use crate::db::event::{
-        InsertQuery as EventInsertQuery, ListQuery as EventListQuery, Object as Event,
-    };
+    use crate::db::event::ListQuery as EventListQuery;
 
     use crate::db::change::ChangeType;
-    use crate::db::room::Object as Room;
     use crate::test_helpers::db::TestDb;
     use crate::test_helpers::prelude::*;
-
-    const AUDIENCE: &str = "dev.svc.example.org";
 
     #[test]
     fn commit_edition() {
@@ -345,7 +336,7 @@ mod tests {
             let room = shared_helpers::insert_room(&conn);
 
             // Seed events.
-            let e1 = create_event(
+            let e1 = shared_helpers::create_event(
                 &conn,
                 &room,
                 1_000_000_000,
@@ -353,7 +344,7 @@ mod tests {
                 json!({"message": "m1"}),
             );
 
-            let e2 = create_event(
+            let e2 = shared_helpers::create_event(
                 &conn,
                 &room,
                 2_000_000_000,
@@ -361,7 +352,7 @@ mod tests {
                 json!({"message": "m2"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 2_500_000_000,
@@ -369,7 +360,7 @@ mod tests {
                 json!({"message": "passthrough"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 3_000_000_000,
@@ -377,7 +368,7 @@ mod tests {
                 json!({"cut": "start"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 4_000_000_000,
@@ -385,7 +376,7 @@ mod tests {
                 json!({"message": "m4"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 5_000_000_000,
@@ -393,7 +384,7 @@ mod tests {
                 json!({"cut": "stop"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 6_000_000_000,
@@ -477,7 +468,7 @@ mod tests {
 
             let room = shared_helpers::insert_room(&conn);
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 2_500_000_000,
@@ -485,7 +476,7 @@ mod tests {
                 json!({"message": "passthrough"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 3_500_000_000,
@@ -493,7 +484,7 @@ mod tests {
                 json!({"message": "cutted out"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 4_200_000_000,
@@ -501,7 +492,7 @@ mod tests {
                 json!({"cut": "start"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 4_500_000_000,
@@ -509,7 +500,7 @@ mod tests {
                 json!({"message": "some message"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 4_800_000_000,
@@ -579,7 +570,7 @@ mod tests {
 
             let room = shared_helpers::insert_room(&conn);
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 2_500_000_000,
@@ -587,7 +578,7 @@ mod tests {
                 json!({"message": "passthrough"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 3_000_000_000,
@@ -595,7 +586,7 @@ mod tests {
                 json!({"cut": "start"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 3_500_000_000,
@@ -603,7 +594,7 @@ mod tests {
                 json!({"message": "cutted out"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 4_000_000_000,
@@ -611,7 +602,7 @@ mod tests {
                 json!({"cut": "stop"}),
             );
 
-            create_event(
+            shared_helpers::create_event(
                 &conn,
                 &room,
                 5_000_000_000,
@@ -666,25 +657,5 @@ mod tests {
             assert_eq!(events[2].data()["message"], "passthrough2");
             assert_eq!(events[2].occurred_at(), 3_500_000_000);
         });
-    }
-
-    fn create_event(
-        conn: &PgConnection,
-        room: &Room,
-        occurred_at: i64,
-        kind: &str,
-        data: JsonValue,
-    ) -> Event {
-        let created_by = AgentId::new("test", AccountId::new("test", AUDIENCE));
-
-        let opened_at = match room.time() {
-            (Bound::Included(opened_at), _) => *opened_at,
-            _ => panic!("Invalid room time"),
-        };
-
-        EventInsertQuery::new(room.id(), kind, &data, occurred_at, &created_by)
-            .created_at(opened_at + Duration::nanoseconds(occurred_at))
-            .execute(conn)
-            .expect("Failed to insert event")
     }
 }

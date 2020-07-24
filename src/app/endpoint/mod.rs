@@ -66,7 +66,9 @@ request_routes!(
     "room.leave" => room::LeaveHandler,
     "room.read" => room::ReadHandler,
     "room.update" => room::UpdateHandler,
-    "state.read" => state::ReadHandler
+    "state.read" => state::ReadHandler,
+    "chat_notifications.update" => chat_notifications::UpdateHandler,
+    "chat_notifications.subscribe" => chat_notifications::SubscribeHandler
 );
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -114,6 +116,7 @@ event_routes!(
 
 mod agent;
 mod change;
+mod chat_notifications;
 mod edition;
 mod event;
 pub(self) mod helpers;
