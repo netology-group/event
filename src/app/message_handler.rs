@@ -11,6 +11,8 @@ use svc_agent::mqtt::{
     IntoPublishableMessage, OutgoingResponse, ResponseStatus, ShortTermTimingProperties,
 };
 use svc_error::{extension::sentry, Error as SvcError};
+use tracing::instrument;
+use tracing::warn as twarn;
 
 use crate::app::{context::Context, endpoint, API_VERSION};
 
@@ -20,6 +22,12 @@ pub(crate) type MessageStream =
 pub(crate) struct MessageHandler<C: Context> {
     agent: Agent,
     context: C,
+}
+
+impl<C: Context> std::fmt::Debug for MessageHandler<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MessageHandler").finish()
+    }
 }
 
 impl<C: Context + Sync> MessageHandler<C> {
@@ -35,10 +43,17 @@ impl<C: Context + Sync> MessageHandler<C> {
         &self.context
     }
 
-    pub(crate) async fn handle(&self, message: &Result<IncomingMessage<String>, String>) {
+    #[instrument(skip(message))]
+    pub(crate) async fn handle(
+        &self,
+        uuid: String,
+        message: &Result<IncomingMessage<String>, String>,
+    ) {
+        twarn!("Initial message match");
         match message {
             Ok(ref message) => {
                 if let Err(err) = self.handle_message(message).await {
+                    twarn!("Error handling a message = '{:?}': {}", message, err,);
                     error!("Error processing a message = '{:?}': {}", message, err,);
 
                     let svc_error = SvcError::builder()
@@ -49,9 +64,11 @@ impl<C: Context + Sync> MessageHandler<C> {
 
                     sentry::send(svc_error)
                         .unwrap_or_else(|err| warn!("Error sending error to Sentry: {}", err));
+                    twarn!("Sent handling error to sentry");
                 }
             }
             Err(e) => {
+                twarn!("Error processing a message = '{:?}': {}", message, e,);
                 error!("Error processing a message = '{:?}': {}", message, e,);
 
                 let svc_error = SvcError::builder()
@@ -64,11 +81,12 @@ impl<C: Context + Sync> MessageHandler<C> {
                     .unwrap_or_else(|err| warn!("Error sending error to Sentry: {}", err));
             }
         }
+        twarn!("Message processed");
     }
 
     async fn handle_message(&self, message: &IncomingMessage<String>) -> Result<(), SvcError> {
         let start_timestamp = Utc::now();
-
+        twarn!("Starting message handling");
         match message {
             IncomingMessage::Request(req) => self.handle_request(req, start_timestamp).await,
             IncomingMessage::Response(_) => {
@@ -86,6 +104,7 @@ impl<C: Context + Sync> MessageHandler<C> {
         request: &IncomingRequest<String>,
         start_timestamp: DateTime<Utc>,
     ) -> Result<(), SvcError> {
+        twarn!("Routing request");
         let outgoing_message_stream =
             endpoint::route_request(&self.context, request, start_timestamp)
                 .await
@@ -99,7 +118,7 @@ impl<C: Context + Sync> MessageHandler<C> {
                         start_timestamp,
                     )
                 });
-
+        twarn!("Publishing outgoings");
         self.publish_outgoing_messages(outgoing_message_stream)
             .await
     }
@@ -111,6 +130,7 @@ impl<C: Context + Sync> MessageHandler<C> {
     ) -> Result<(), SvcError> {
         match event.properties().label() {
             Some(label) => {
+                twarn!("Routing event");
                 let outgoing_message_stream =
                     endpoint::route_event(&self.context, event, start_timestamp)
                         .await
@@ -119,10 +139,12 @@ impl<C: Context + Sync> MessageHandler<C> {
                             Box::new(stream::empty())
                         });
 
+                twarn!("Publishing outgoings");
                 self.publish_outgoing_messages(outgoing_message_stream)
                     .await
             }
             None => {
+                twarn!("Received event with missing label, skipping");
                 warn!("Got event with missing label");
                 Ok(())
             }
@@ -137,6 +159,7 @@ impl<C: Context + Sync> MessageHandler<C> {
         pin_mut!(message_stream);
 
         while let Some(message) = message_stream.next().await {
+            twarn!("Single publish");
             publish_message(&mut agent, message)?;
         }
 

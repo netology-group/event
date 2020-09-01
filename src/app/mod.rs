@@ -127,7 +127,8 @@ pub(crate) async fn run(
 
             task::spawn_blocking(move || match message {
                 AgentNotification::Message(ref message, _) => {
-                    async_std::task::block_on(message_handler.handle(message));
+                    let req_uuid = uuid::Uuid::new_v4().to_string();
+                    async_std::task::block_on(message_handler.handle(req_uuid, message));
                 }
                 AgentNotification::Disconnection => error!("Disconnected from broker"),
                 AgentNotification::Reconnection => {

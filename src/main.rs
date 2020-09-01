@@ -8,11 +8,21 @@ use std::env::var;
 use anyhow::Result;
 use dotenv::dotenv;
 use svc_authz::cache::{create_pool, Cache};
+use tracing_subscriber::FmtSubscriber;
 
 #[async_std::main]
 async fn main() -> Result<()> {
     dotenv().ok();
     env_logger::init();
+
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(tracing::Level::INFO)
+        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::with_format(
+            "%Y-%m-%d %H:%M:%S%.6f".to_string(),
+        ))
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
     let ((db, db_pool_stats), maybe_ro_db) = {
         let url = var("DATABASE_URL").expect("DATABASE_URL must be specified");

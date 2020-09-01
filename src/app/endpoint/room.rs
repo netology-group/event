@@ -15,6 +15,7 @@ use svc_agent::{
     Addressable, AgentId,
 };
 use svc_error::{extension::sentry, Error as SvcError};
+use tracing::warn as twarn;
 use uuid::Uuid;
 
 use crate::app::context::Context;
@@ -298,16 +299,21 @@ impl RequestHandler for EnterHandler {
         reqp: &IncomingRequestProperties,
         start_timestamp: DateTime<Utc>,
     ) -> Result {
+        twarn!("Finding room");
+
         let room = {
             let query = FindQuery::new(payload.id).time(now());
+            twarn!("Acquiring db connection");
             let conn = context.ro_db().get()?;
 
+            twarn!("Db request");
             context
                 .profiler()
                 .measure(ProfilerKeys::RoomFindQuery, || query.execute(&conn))?
                 .ok_or_else(|| format!("Room not found or closed, id = '{}'", payload.id))
                 .status(ResponseStatus::NOT_FOUND)?
         };
+        twarn!("Room found");
 
         // Authorize subscribing to the room's events.
         let room_id = room.id().to_string();
@@ -317,16 +323,19 @@ impl RequestHandler for EnterHandler {
             .authz()
             .authorize(room.audience(), reqp, object.clone(), "subscribe")
             .await?;
+        twarn!("Room access authorized, building agent");
 
         // Register agent in `in_progress` state.
         {
             let conn = context.db().get()?;
             let query = agent::InsertQuery::new(reqp.as_agent_id(), room.id());
+            twarn!("Agent db request");
 
             context
                 .profiler()
                 .measure(ProfilerKeys::AgentInsertQuery, || query.execute(&conn))?;
         }
+        twarn!("Agent inserted");
 
         // Send dynamic subscription creation request to the broker.
         let payload = SubscriptionRequest::new(reqp.as_agent_id().to_owned(), object);
@@ -352,6 +361,9 @@ impl RequestHandler for EnterHandler {
         //        to send a multicast request to the broker.
         let outgoing_request = OutgoingRequest::unicast(payload, props, reqp, MQTT_GW_API_VERSION);
         let boxed_request = Box::new(outgoing_request) as Box<dyn IntoPublishableMessage + Send>;
+
+        twarn!("Handler done");
+
         Ok(Box::new(stream::once(boxed_request)))
     }
 }
