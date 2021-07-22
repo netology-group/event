@@ -31,7 +31,6 @@ pub(crate) async fn call(
         "Room adjustment task started for room_id = '{}'",
         real_time_room.id()
     );
-
     let start_timestamp = Utc::now();
 
     // Parse segments.
@@ -84,7 +83,6 @@ pub(crate) async fn call(
                     real_time_room.id(),
                 )
             })?;
-
         new_time
     } else {
         time
@@ -144,8 +142,22 @@ pub(crate) async fn call(
     // Invert segments to gaps.
     let segment_gaps = invert_segments(&nano_segments, room_duration)?;
 
+    // Calculate total duration of initial segments.
+    let total_segments_millis = parsed_segments
+        .into_iter()
+        .fold(0, |acc, (start, stop)| acc + (stop - start));
+
+    let total_segments_duration = Duration::milliseconds(total_segments_millis);
+
     // Create original room with events shifted according to segments.
-    let original_room = create_room(&mut conn, profiler, &real_time_room, started_at).await?;
+    let original_room = create_room(
+        &mut conn,
+        profiler,
+        &real_time_room,
+        started_at,
+        total_segments_duration,
+    )
+    .await?;
 
     clone_events(
         &mut conn,
@@ -179,7 +191,14 @@ pub(crate) async fn call(
     let cut_gaps = cut_events_to_gaps(&cut_events)?;
 
     // Create modified room with events shifted again according to cut events this time.
-    let modified_room = create_room(&mut conn, profiler, &original_room, started_at).await?;
+    let modified_room = create_room(
+        &mut conn,
+        profiler,
+        &original_room,
+        started_at,
+        total_segments_duration,
+    )
+    .await?;
     clone_events(&mut conn, profiler, &modified_room, &cut_gaps, 0).await?;
 
     // Delete cut events from the modified room.
@@ -199,13 +218,6 @@ pub(crate) async fn call(
         })?;
 
     ///////////////////////////////////////////////////////////////////////////
-
-    // Calculate total duration of initial segments.
-    let total_segments_millis = parsed_segments
-        .into_iter()
-        .fold(0, |acc, (start, stop)| acc + (stop - start));
-
-    let total_segments_duration = Duration::milliseconds(total_segments_millis);
 
     // Calculate modified segments by inverting cut gaps limited by total initial segments duration.
     let modified_segments = invert_segments(&cut_gaps, total_segments_duration)?
@@ -241,15 +253,11 @@ async fn create_room(
     profiler: &Profiler<(ProfilerKeys, Option<String>)>,
     source_room: &Room,
     started_at: DateTime<Utc>,
+    room_duration: Duration,
 ) -> Result<Room> {
     let time = (
         Bound::Included(started_at),
-        source_room
-            .time()
-            .map_err(|e| anyhow!(e))?
-            .end()
-            .to_owned()
-            .into(),
+        Bound::Excluded(started_at + room_duration),
     );
     let mut query = RoomInsertQuery::new(&source_room.audience(), time.into());
     query = query.source_room_id(source_room.id());
@@ -447,7 +455,6 @@ mod tests {
     use sqlx::postgres::PgConnection;
     use svc_agent::{AccountId, AgentId};
 
-    use crate::app::metrics::ProfilerKeys;
     use crate::db::adjustment::Segments;
     use crate::db::event::{
         InsertQuery as EventInsertQuery, ListQuery as EventListQuery, Object as Event,
@@ -455,6 +462,7 @@ mod tests {
     use crate::db::room::{InsertQuery as RoomInsertQuery, Object as Room, Time as RoomTime};
     use crate::profiler::Profiler;
     use crate::test_helpers::db::TestDb;
+    use crate::{app::metrics::ProfilerKeys, db::room_time::RoomTimeBound};
 
     const AUDIENCE: &str = "dev.svc.example.org";
 
@@ -484,7 +492,7 @@ mod tests {
                 (Bound::Included(0), Bound::Excluded(6500)),
                 (Bound::Included(8500), Bound::Excluded(11500)),
             ]);
-
+            let duration = Duration::milliseconds(6500 + 11500 - 8500);
             // RTC started 10 seconds after the room opened and preroll is 3 seconds long.
             let started_at = opened_at + Duration::seconds(10);
 
@@ -506,7 +514,7 @@ mod tests {
             assert_eq!(original_room.time().map(|t| *t.start()), Ok(started_at));
             assert_eq!(
                 original_room.time().map(|t| t.end().to_owned()),
-                room.time().map(|t| t.end().to_owned())
+                Ok(RoomTimeBound::Excluded(started_at + duration))
             );
             assert_eq!(original_room.tags(), room.tags());
 
@@ -560,6 +568,7 @@ mod tests {
                 (Bound::Included(0), Bound::Excluded(6500)),
                 (Bound::Included(8500), Bound::Excluded(11500)),
             ]);
+            let duration = Duration::milliseconds(6500 + 11500 - 8500);
 
             // RTC started 10 seconds after the room opened and preroll is 3 seconds long.
             let started_at = opened_at + Duration::seconds(10);
@@ -582,7 +591,7 @@ mod tests {
             assert_eq!(original_room.time().map(|t| *t.start()), Ok(started_at));
             assert_eq!(
                 original_room.time().map(|t| t.end().to_owned()),
-                room.time().map(|t| t.end().to_owned())
+                Ok(RoomTimeBound::Excluded(started_at + duration))
             );
             assert_eq!(original_room.tags(), room.tags());
 
